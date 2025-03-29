@@ -1,7 +1,8 @@
-from typing import Optional
 from fastapi import FastAPI,Response,status,HTTPException
 from pydantic import BaseModel
-
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import time
 app = FastAPI()
 
 # Define the Post model
@@ -10,6 +11,16 @@ class Post(BaseModel):
     content: str
     ispublished: bool = True  # Default value
 
+
+while True:
+    try:
+        conn = psycopg2.connect(host='localhost',database='fastApi', user='postgres',password='00&Achraf&',cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        print('Database was connected successfully')
+        break
+    except Exception as error:
+        print("connection to database Faild")
+        print('Error : ',error)
 # Sample data
 my_posts = [
     {"title": "title 1", "content": "content of books 1", "id": 1},
@@ -24,20 +35,19 @@ async def root():
 # Get all posts
 @app.get("/posts")
 async def get_posts():
-    return {"data": my_posts}
+    cursor.execute("""Select * from posts """)
+    posts = cursor.fetchall()
+    return {"data": posts}
 
 # Create a new post
 @app.post("/posts",status_code = status.HTTP_201_CREATED)
 async def create_post(new_post: Post):
-    # Convert the Pydantic model to a dictionary
-    post_dict = new_post.model_dump()
-    
-    #post_dict = new_post.dict()
-    # Generate a new ID (simple increment for demonstration)
-    post_dict["id"] = len(my_posts) + 1
-    # Add the new post to the list
-    my_posts.append(post_dict)
-    return {"data": post_dict}
+
+    cursor.execute("""INSERT INTO posts (title,content,ispublished) VALUES (%s, %s, %s) RETURNING * """,(new_post.title,new_post.content,new_post.ispublished))
+    new_post_created = cursor.fetchone()
+
+    conn.commit()
+    return {"data": new_post_created}
 
 
 
@@ -75,7 +85,8 @@ async def get_posts(id: int, response: Response):
 
 @app.get("/posts/{id}")
 async def get_posts(id: int):
-    post = find_posts(id)
+    cursor.execute("""Select * from posts where id=%s """,(str(id)))
+    post = cursor.fetchone()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f'post with id: {id} Not found')
     return {"data": post}
@@ -83,9 +94,11 @@ async def get_posts(id: int):
 
 @app.delete("/posts/{id}",status_code = status.HTTP_204_NO_CONTENT)
 async def get_posts(id: int):
-    index = find_index_posts(id)
-    if(index==-1):
-        my_posts.pop(index)
+    cursor.execute("""DELETE FROM posts WHERE id=%s RETURNING *""",(str(id),))
+    delete_post = cursor.fetchone()
+
+    conn.commit()
+    if(delete_post==None):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f'post with id: {id} is Not found')
     
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -93,10 +106,9 @@ async def get_posts(id: int):
 
 @app.put("/posts/{id}")
 async def update_posts(id: int, post:Post):
-    index = find_index_posts(id)
-    if(index==-1):
+    cursor.execute("""UPDATE posts SET title=%s, content = %s, ispublished = %s WHERE id = %s RETURNING *""",(post.title,post.content,post.ispublished,str(id)))
+    updating_post = cursor.fetchone()
+    conn.commit()
+    if(updating_post==None):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f'post with id: {id} is Not found')
-    post_dic = post.model_dump()
-    post_dic['id'] = id
-    my_posts[index] = post_dic
-    return {"data":post_dic}
+    return {"data":updating_post}
